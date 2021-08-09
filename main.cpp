@@ -2,11 +2,18 @@
 #include <ArduinoOTA.h>
 #include "MHZ19.h"                                        
 #include <SoftwareSerial.h>                                // Remove if using HardwareSerial
-#include <ESP8266WebServer.h>
-#include <WiFiManager.h>
 #include <MQTT.h>
 #include <ArduinoJson.h>
 
+#include <ESPAsync_WiFiManager.h> 
+
+#if defined(ESP8266)
+//#include <WiFiManager.h>
+//#include <ESP8266WebServer.h>
+#elif defined(ESP32)
+//#include <WebServer.h>
+//#include <Esp32WifiManager.h>
+#endif
 
 #define RX_PIN D2                               // Rx pin which the MHZ19 Tx pin is attached to
 #define TX_PIN D3                               // Tx pin which the MHZ19 Rx pin is attached to
@@ -25,14 +32,27 @@
 #include "local-constants.h"                    // Override some constants if local file exists
 #endif
 
-String gDeviceName  = String() + "co2meter-" + ESP.getChipId();
+#ifdef ESP8266
+    uint32_t chipID = ESP.getChipId();
+#endif
+#ifdef ESP32
+    uint64_t macAddress = ESP.getEfuseMac();
+    uint64_t macAddressTrunc = macAddress << 40;
+    uint32_t chipID = macAddressTrunc >> 40;
+#endif
+
+
+String gDeviceName  = String() + "co2meter-" + chipID;
 String gTopic       = "wifi2mqtt/co2meter";
 
-WiFiManager         wifiManager;
+//WiFiManager         wifiManager;
 WiFiClient          wifiClient;
 MQTTClient          mqttClient(2048);
-ESP8266WebServer    webServer(80);
+//ESP8266WebServer    webServer(80);
 //Logger              logger;
+
+AsyncWebServer webServer(80);
+DNSServer dnsServer;
 
 MHZ19 myMHZ19;                                             // Constructor for library
 SoftwareSerial mySerial(RX_PIN, TX_PIN);                   // (Uno example) create device to MH-Z19 serial
@@ -66,18 +86,24 @@ void setup()
     myMHZ19.autoCalibration();                              // Turn auto calibration ON (OFF autoCalibration(false))
 
     // =========== WiFi setup ===========
-    wifi_set_sleep_type(NONE_SLEEP_T); // prevent wifi sleep (stronger connection)
+    //wifi_set_sleep_type(NONE_SLEEP_T); // prevent wifi sleep (stronger connection)
     // On Access Point started (not called if wifi is configured)
-    wifiManager.setAPCallback([](WiFiManager *mgr){
-        Serial.println(String("Please connect to Wi-Fi"));
-        Serial.println(String("Network: ") + mgr->getConfigPortalSSID());
-        Serial.println(String("Password: 12341234"));
-        Serial.println(String("Then go to ip: 10.0.1.1"));
-    });
+    // wifiManager.setAPCallback([](WiFiManager *mgr){
+    //     Serial.println(String("Please connect to Wi-Fi"));
+    //     Serial.println(String("Network: ") + mgr->getConfigPortalSSID());
+    //     Serial.println(String("Password: 12341234"));
+    //     Serial.println(String("Then go to ip: 10.0.1.1"));
+    // });
 
-    wifiManager.setAPStaticIPConfig(IPAddress(10, 0, 1, 1), IPAddress(10, 0, 1, 1), IPAddress(255, 255, 255, 0));
-    wifiManager.setConfigPortalTimeout(60);
-    wifiManager.autoConnect(gDeviceName.c_str(), "12341234"); // IMPORTANT! Blocks execution. Waits until connected
+    // wifiManager.setAPStaticIPConfig(IPAddress(10, 0, 1, 1), IPAddress(10, 0, 1, 1), IPAddress(255, 255, 255, 0));
+    // wifiManager.setConfigPortalTimeout(60);
+    // wifiManager.autoConnect(gDeviceName.c_str(), "12341234"); // IMPORTANT! Blocks execution. Waits until connected
+
+    ESPAsync_WiFiManager ESPAsync_wifiManager(&webServer, &dnsServer, "AutoConnectAP");
+    //ESPAsync_wifiManager.resetSettings();   //reset saved settings
+    //ESPAsync_wifiManager.setAPStaticIPConfig(IPAddress(192,168,186,1), IPAddress(192,168,186,1), IPAddress(255,255,255,0));
+    ESPAsync_wifiManager.autoConnect("AutoConnectAP");
+    if (WiFi.status() == WL_CONNECTED) { Serial.print(F("Connected. Local IP: ")); Serial.println(WiFi.localIP()); }
 
     // Restart if not connected
     if (WiFi.status() != WL_CONNECTED)
