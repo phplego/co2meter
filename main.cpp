@@ -12,6 +12,10 @@
 #define TX_PIN D3                               // Tx pin which the MHZ19 Rx pin is attached to
 #define BAUDRATE 9600                           // Device to MH-Z19 Serial baudrate (should not be changed)
 
+#define CHECK_CO2_INTERVAL    5000              // How often read data from the sensor
+#define MQTT_PUBLISH_INTERVAL 20000             // How often publish co2 data to the mqtt topic
+
+
 #define MQTT_HOST       "xxx.xxx.xxx.xxx"       // MQTT host (eg m21.cloudmqtt.com)
 #define MQTT_PORT       1883                    // MQTT port (18076)
 #define MQTT_USER       "KJsdfyUYADSFhjscxv678" // Ingored if brocker allows guest connection
@@ -102,7 +106,7 @@ void co2Loop()
     static unsigned long getDataTimer = 0;
     static unsigned long mqttTimer = 0;
     
-    if (millis() - getDataTimer >= 5000)
+    if (millis() - getDataTimer >= CHECK_CO2_INTERVAL)
     {
         /* note: getCO2() default is command "CO2 Unlimited". This returns the correct CO2 reading even 
         if below background CO2 levels or above range (useful to validate sensor). You can use the 
@@ -121,10 +125,16 @@ void co2Loop()
         Serial.print(temp);                               
         Serial.println();
 
-        if (millis() - mqttTimer >= 10000){
+        if (millis() - mqttTimer >= MQTT_PUBLISH_INTERVAL){
             DynamicJsonDocument doc(512);
-            doc["co2"] = CO2;
-            doc["temp"] = temp;
+            if(myMHZ19.errorCode == RESULT_OK){
+                if(CO2)
+                    doc["co2"] = CO2;
+                doc["temp"] = temp;
+            }
+            else{
+                doc["error"] = myMHZ19.errorCode;
+            }
             String json;
             serializeJson(doc, json);
             mqttClient.publish(gTopic, json);        
