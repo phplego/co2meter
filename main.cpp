@@ -6,6 +6,7 @@
 #include <WiFiManager.h>
 #include <MQTT.h>
 #include <ArduinoJson.h>
+#include "Queue.h"
 
 
 #define RX_PIN D2                               // Rx pin which the MHZ19 Tx pin is attached to
@@ -34,9 +35,10 @@ MQTTClient          mqttClient(2048);
 ESP8266WebServer    webServer(80);
 //Logger              logger;
 
-MHZ19 myMHZ19;                                             // Constructor for library
-SoftwareSerial mySerial(RX_PIN, TX_PIN);                   // (Uno example) create device to MH-Z19 serial
+MHZ19               myMHZ19;         
+SoftwareSerial      mySerial(RX_PIN, TX_PIN);  // create device to MH-Z19 serial
 
+Queue<10> co2queue;
 
 void mqtt_connect()
 {
@@ -103,19 +105,32 @@ void setup()
 
 void co2Loop()
 {
-    static unsigned long getDataTimer = 0;
-    static unsigned long mqttTimer = 0;
+    static unsigned long lastGetDataTime = 0;
+    static unsigned long lastMqttPublishTime = 0;
     
-    if (millis() - getDataTimer >= CHECK_CO2_INTERVAL)
+    if (millis() - lastGetDataTime >= CHECK_CO2_INTERVAL)
     {
         /* note: getCO2() default is command "CO2 Unlimited". This returns the correct CO2 reading even 
         if below background CO2 levels or above range (useful to validate sensor). You can use the 
         usual documented command with getCO2(false) */
 
-        int CO2 = myMHZ19.getCO2();                             // Request CO2 (as ppm)
+        int co2value = myMHZ19.getCO2();                             // Request CO2 (as ppm)
+
+        if(myMHZ19.errorCode == RESULT_OK)
+        {
+            co2queue.add(co2value);
+        }
+        else {
+            // publish error to MQTT
+            DynamicJsonDocument doc(512);
+            doc["error"] = myMHZ19.errorCode;
+            String json;
+            serializeJson(doc, json);
+            mqttClient.publish(gTopic, json);        
+        }
         
         Serial.print("CO2 (ppm): ");                      
-        Serial.print(CO2);                                
+        Serial.print(co2value);                                
 
         Serial.print(" BackCO2: ");
         Serial.print(myMHZ19.getBackgroundCO2());
@@ -125,24 +140,18 @@ void co2Loop()
         Serial.print(temp);                               
         Serial.println();
 
-        if (millis() - mqttTimer >= MQTT_PUBLISH_INTERVAL){
+        if (millis() - lastMqttPublishTime >= MQTT_PUBLISH_INTERVAL && !co2queue.isEmpty()){
             DynamicJsonDocument doc(512);
-            if(myMHZ19.errorCode == RESULT_OK){
-                if(CO2)
-                    doc["co2"] = CO2;
-                doc["temp"] = temp;
-            }
-            else{
-                doc["error"] = myMHZ19.errorCode;
-            }
+            doc["co2"] = (int) co2queue.average();
+            doc["temp"] = temp;
             String json;
             serializeJson(doc, json);
             mqttClient.publish(gTopic, json);        
             Serial.println(String() + "Published: " + json);  
-            mqttTimer = millis();
+            lastMqttPublishTime = millis();
         }
 
-        getDataTimer = millis();
+        lastGetDataTime = millis();
     }
 }
 
