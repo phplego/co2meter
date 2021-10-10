@@ -5,8 +5,10 @@ typedef void (*ChangesDetectedCallbackType)(void);
 typedef void (*GetValuesCallbackType)(float *);
 
 template <int SZ>
-class ChangesDetector {
-    const float THRESHOLD = 0.2;
+class ChangesDetector 
+{
+    public:
+        float threshold = 0.2;
 
     private:
         float                           values [SZ]                 = {0};    // Remembered values
@@ -54,7 +56,7 @@ void ChangesDetector<SZ>::loop()
     
     // check each value if changed enough
     for(int i = 0; i < SZ; i++){
-        if(std::abs(buf[i] - this->values[i]) >= THRESHOLD){
+        if(std::abs(buf[i] - this->values[i]) >= this->threshold){
             detected = true;
         }
     }

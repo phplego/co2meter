@@ -7,6 +7,7 @@
 #include <MQTT.h>
 #include <ArduinoJson.h>
 #include "Queue.h"
+#include "ChangesDetector.h"
 
 
 #define RX_PIN D2                               // Rx pin which the MHZ19 Tx pin is attached to
@@ -14,7 +15,7 @@
 #define BAUDRATE 9600                           // Device to MH-Z19 Serial baudrate (should not be changed)
 
 #define CHECK_CO2_INTERVAL    5000              // How often read data from the sensor
-#define MQTT_PUBLISH_INTERVAL 20000             // How often publish co2 data to the mqtt topic
+#define MQTT_PUBLISH_INTERVAL 60000             // How often publish co2 data to the mqtt topic (if no changes detected)
 
 
 #define MQTT_HOST       "xxx.xxx.xxx.xxx"       // MQTT host (eg m21.cloudmqtt.com)
@@ -40,6 +41,8 @@ SoftwareSerial      mySerial(RX_PIN, TX_PIN);  // create device to MH-Z19 serial
 
 Queue<10> co2queue;
 
+ChangesDetector<1> changesDetector;
+
 void mqtt_connect()
 {
     static unsigned long stLastConnectTryTime = 0;
@@ -57,6 +60,64 @@ void mqtt_connect()
         Serial.println(" failed. Retry in 60 sec..");
 }
 
+void publishState()
+{
+    DynamicJsonDocument doc(512);
+    doc["co2"] = (int) co2queue.average();
+    String json;
+    serializeJson(doc, json);
+    mqttClient.publish(gTopic, json);        
+    Serial.println(String() + "Published: " + json);  
+    
+    // Remember published values (to detect changes)
+    changesDetector.remember();
+}
+
+void co2Loop()
+{
+    static unsigned long lastGetDataTime = 0;
+    static unsigned long lastMqttPublishTime = 0;
+    
+    if (millis() - lastGetDataTime >= CHECK_CO2_INTERVAL)
+    {
+        /* note: getCO2() default is command "CO2 Unlimited". This returns the correct CO2 reading even 
+        if below background CO2 levels or above range (useful to validate sensor). You can use the 
+        usual documented command with getCO2(false) */
+
+        int co2value = myMHZ19.getCO2();                             // Request CO2 (as ppm)
+
+        if(myMHZ19.errorCode == RESULT_OK)
+        {
+            co2queue.add(co2value);
+        }
+        else {
+            // publish error to MQTT
+            DynamicJsonDocument doc(512);
+            doc["error"] = myMHZ19.errorCode;
+            String json;
+            serializeJson(doc, json);
+            mqttClient.publish(gTopic, json);        
+        }
+        
+        Serial.print("CO2 (ppm): ");                      
+        Serial.print(co2value);                                
+
+        Serial.print(" BackCO2: ");
+        Serial.print(myMHZ19.getBackgroundCO2());
+
+        int8_t temp = myMHZ19.getTemperature();                     // Request Temperature (as Celsius)
+        Serial.print(" Temp (C): ");                  
+        Serial.print(temp);                               
+        Serial.println();
+
+        if (millis() - lastMqttPublishTime >= MQTT_PUBLISH_INTERVAL && !co2queue.isEmpty()){
+            publishState();
+            lastMqttPublishTime = millis();
+        }
+
+        lastGetDataTime = millis();
+    }
+}
 
 void setup()
 {
@@ -101,64 +162,26 @@ void setup()
 
     // =========== Initialize OTA (firmware updates via WiFi) ===========
     ArduinoOTA.begin();
+
+
+    // Changes detector setup
+    changesDetector.threshold = 20; // 20 ppm
+    changesDetector.setChangesDetectedCallback([](){
+        publishState();
+    });
+    changesDetector.setGetValuesCallback([](float buf []){
+        buf[0] = co2queue.average();
+    });
 }
 
-void co2Loop()
-{
-    static unsigned long lastGetDataTime = 0;
-    static unsigned long lastMqttPublishTime = 0;
-    
-    if (millis() - lastGetDataTime >= CHECK_CO2_INTERVAL)
-    {
-        /* note: getCO2() default is command "CO2 Unlimited". This returns the correct CO2 reading even 
-        if below background CO2 levels or above range (useful to validate sensor). You can use the 
-        usual documented command with getCO2(false) */
 
-        int co2value = myMHZ19.getCO2();                             // Request CO2 (as ppm)
 
-        if(myMHZ19.errorCode == RESULT_OK)
-        {
-            co2queue.add(co2value);
-        }
-        else {
-            // publish error to MQTT
-            DynamicJsonDocument doc(512);
-            doc["error"] = myMHZ19.errorCode;
-            String json;
-            serializeJson(doc, json);
-            mqttClient.publish(gTopic, json);        
-        }
-        
-        Serial.print("CO2 (ppm): ");                      
-        Serial.print(co2value);                                
-
-        Serial.print(" BackCO2: ");
-        Serial.print(myMHZ19.getBackgroundCO2());
-
-        int8_t temp = myMHZ19.getTemperature();                     // Request Temperature (as Celsius)
-        Serial.print(" Temp (C): ");                  
-        Serial.print(temp);                               
-        Serial.println();
-
-        if (millis() - lastMqttPublishTime >= MQTT_PUBLISH_INTERVAL && !co2queue.isEmpty()){
-            DynamicJsonDocument doc(512);
-            doc["co2"] = (int) co2queue.average();
-            doc["temp"] = temp;
-            String json;
-            serializeJson(doc, json);
-            mqttClient.publish(gTopic, json);        
-            Serial.println(String() + "Published: " + json);  
-            lastMqttPublishTime = millis();
-        }
-
-        lastGetDataTime = millis();
-    }
-}
 
 void loop()
 {
     ArduinoOTA.handle();
     co2Loop();
+    changesDetector.loop();
     mqttClient.loop();
 
     if (WiFi.status() == WL_CONNECTED && !mqttClient.connected())
