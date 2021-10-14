@@ -14,7 +14,7 @@
 #define TX_PIN D3                               // Tx pin which the MHZ19 Rx pin is attached to
 #define BAUDRATE 9600                           // Device to MH-Z19 Serial baudrate (should not be changed)
 
-#define CHECK_CO2_INTERVAL    5000              // How often read data from the sensor
+#define CHECK_CO2_INTERVAL    2000              // How often read data from the sensor
 #define MQTT_PUBLISH_INTERVAL 60000             // How often publish co2 data to the mqtt topic (if no changes detected)
 
 
@@ -39,9 +39,11 @@ ESP8266WebServer    webServer(80);
 MHZ19               myMHZ19;         
 SoftwareSerial      mySerial(RX_PIN, TX_PIN);  // create device to MH-Z19 serial
 
-Queue<10> co2queue;
+Queue<3>            co2queue;
+ChangesDetector<1>  changesDetector;
 
-ChangesDetector<1> changesDetector;
+unsigned long gLastMqttPublishTime = 0;
+
 
 void mqtt_connect()
 {
@@ -62,6 +64,8 @@ void mqtt_connect()
 
 void publishState()
 {
+    gLastMqttPublishTime = millis();
+    
     DynamicJsonDocument doc(512);
     doc["co2"] = (int) co2queue.average();
     String json;
@@ -76,7 +80,6 @@ void publishState()
 void co2Loop()
 {
     static unsigned long lastGetDataTime = 0;
-    static unsigned long lastMqttPublishTime = 0;
     
     if (millis() - lastGetDataTime >= CHECK_CO2_INTERVAL)
     {
@@ -89,6 +92,12 @@ void co2Loop()
         if(myMHZ19.errorCode == RESULT_OK)
         {
             co2queue.add(co2value);
+
+            // DynamicJsonDocument doc(512);
+            // doc["co2"] = co2value;
+            // String json;
+            // serializeJson(doc, json);
+            // mqttClient.publish(gTopic+"-live", json);        
         }
         else {
             // publish error to MQTT
@@ -110,9 +119,8 @@ void co2Loop()
         Serial.print(temp);                               
         Serial.println();
 
-        if (millis() - lastMqttPublishTime >= MQTT_PUBLISH_INTERVAL && !co2queue.isEmpty()){
+        if (millis() - gLastMqttPublishTime >= MQTT_PUBLISH_INTERVAL && !co2queue.isEmpty()){
             publishState();
-            lastMqttPublishTime = millis();
         }
 
         lastGetDataTime = millis();
@@ -165,7 +173,7 @@ void setup()
 
 
     // Changes detector setup
-    changesDetector.threshold = 20; // 20 ppm
+    changesDetector.threshold = 10; // 10 ppm
     changesDetector.setChangesDetectedCallback([](){
         publishState();
     });
