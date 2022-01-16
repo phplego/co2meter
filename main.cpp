@@ -103,6 +103,7 @@ void co2Loop()
             // publish error to MQTT
             DynamicJsonDocument doc(512);
             doc["error"] = myMHZ19.errorCode;
+            doc["co2"] = co2queue.average(); // also publish average value anyway
             String json;
             serializeJson(doc, json);
             mqttClient.publish(gTopic, json);        
