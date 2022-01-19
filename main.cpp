@@ -215,6 +215,80 @@ void setup()
         buf[0] = co2queue.average();
     });
 
+    
+    // setup webserver 
+    webServer.begin();
+
+    String domainLan = String() + WiFi.hostname() + ".lan";
+
+    String menu;
+        menu += "<div>";
+        menu += String() + "<a href='http://"+domainLan+"'>"+domainLan+"</a> | ";
+        menu += "<a href='/'>index</a> ";
+        menu += "<a href='/restart'>restart</a> ";
+        menu += "<a href='/logout'>logout</a> ";
+        menu += "</div><hr>";
+
+    webServer.on("/", [menu](){
+        String str = ""; 
+        str += menu;
+        str += "<pre>";
+        str += String() + "        CO2 level: " + co2queue.average() + " \n\n";
+        str += String() + "           Uptime: " + (millis() / 1000) + " \n";
+        str += String() + "      FullVersion: " + ESP.getFullVersion() + " \n";
+        str += String() + "      ESP Chip ID: " + ESP.getChipId() + " \n";
+        str += String() + "         Hostname: " + WiFi.hostname() + " \n";
+        str += String() + "       CpuFreqMHz: " + ESP.getCpuFreqMHz() + " \n";
+        str += String() + "      WiFi status: " + wifiClient.status() + " \n";
+        str += String() + "         FreeHeap: " + ESP.getFreeHeap() + " \n";
+        str += String() + "       SketchSize: " + ESP.getSketchSize() + " \n";
+        str += String() + "  FreeSketchSpace: " + ESP.getFreeSketchSpace() + " \n";
+        str += String() + "    FlashChipSize: " + ESP.getFlashChipSize() + " \n";
+        str += String() + "FlashChipRealSize: " + ESP.getFlashChipRealSize() + " \n";
+        str += "</pre>";
+
+        webServer.send(200, "text/html; charset=utf-8", str);     
+    });
+
+    // Restart ESP
+    webServer.on("/restart", [menu](){
+        if(webServer.method() == HTTP_POST){
+            webServer.send(200, "text/html", "OK");
+            ESP.reset();
+        }
+        else{
+            String output = "";
+            output += menu;
+            output += String() + "<pre>";
+            output += String() + "Uptime: " + (millis() / 1000) + " \n";
+            output += String() + "</pre>";
+            output += "<form method='post'><button>Restart ESP now!</button></form>";
+            webServer.send(200, "text/html", output);
+        }
+    });
+
+
+    // Logout (reset wifi settings)
+    webServer.on("/logout", [menu](){
+        if(webServer.method() == HTTP_POST){
+            webServer.send(200, "text/html", "OK");
+            wifiManager.resetSettings();
+            ESP.reset();
+        }
+        else{
+            String output = "";
+            output += menu;
+            output += String() + "<pre>";
+            output += String() + "Wifi network: " + WiFi.SSID() + " \n";
+            output += String() + "        RSSI: " + WiFi.RSSI() + " \n";
+            output += String() + "    hostname: " + WiFi.hostname() + " \n";
+            output += String() + "</pre>";
+            output += "<form method='post'><button>Forget</button></form>";
+            webServer.send(200, "text/html", output);
+        }
+    });
+    
+
     // Play 'Setup completed' melody
     myTone(1000, 100);
     myTone(500, 100);
@@ -230,6 +304,7 @@ void loop()
     co2Loop();
     changesDetector.loop();
     mqttClient.loop();
+    webServer.handleClient();
 
     if (WiFi.status() == WL_CONNECTED && !mqttClient.connected())
     {
