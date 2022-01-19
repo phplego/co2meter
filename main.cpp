@@ -17,6 +17,9 @@
 #define CHECK_CO2_INTERVAL    2000              // How often read data from the sensor
 #define MQTT_PUBLISH_INTERVAL 60000             // How often publish co2 data to the mqtt topic (if no changes detected)
 
+#define BUZZER_PIN D1
+#define CO2_WARN_LEVEL 1000
+#define CO2_WARN_LEVEL2 2000
 
 #define MQTT_HOST       "xxx.xxx.xxx.xxx"       // MQTT host (eg m21.cloudmqtt.com)
 #define MQTT_PORT       1883                    // MQTT port (18076)
@@ -29,6 +32,7 @@
 
 String gDeviceName  = String() + "co2meter-" + ESP.getChipId();
 String gTopic       = "wifi2mqtt/co2meter";
+
 
 WiFiManager         wifiManager;
 WiFiClient          wifiClient;
@@ -43,6 +47,12 @@ Queue<3>            co2queue;
 ChangesDetector<1>  changesDetector;
 
 unsigned long gLastMqttPublishTime = 0;
+
+void myTone(int freq, int duration)
+{
+    tone(BUZZER_PIN, freq, duration);
+    delay(duration);
+}
 
 
 void mqtt_connect()
@@ -124,13 +134,36 @@ void co2Loop()
             publishState();
         }
 
+        // play BIP-BIP sound when the level of CO2 is too high
+        if(co2queue.average() > CO2_WARN_LEVEL){
+            myTone(800, 100);
+            delay(50);
+            myTone(800, 100);
+            if(co2queue.average() > CO2_WARN_LEVEL2){
+                delay(50);
+                myTone(800, 100);
+            }
+        }
+
         lastGetDataTime = millis();
     }
+}
+
+void warnLoop()
+{
+
 }
 
 void setup()
 {
     Serial.begin(74880);                                    // Device to serial monitor feedback
+
+    pinMode(BUZZER_PIN, OUTPUT);
+
+    // Play 'start' melody
+    myTone(800, 100);
+    myTone(400, 100);
+    myTone(1200, 100);
     
     // =========== CO2 sensor setup ===========
     mySerial.begin(BAUDRATE);                               // (Uno example) device to MH-Z19 serial start   
@@ -181,6 +214,11 @@ void setup()
     changesDetector.setGetValuesCallback([](float buf []){
         buf[0] = co2queue.average();
     });
+
+    // Play 'Setup completed' melody
+    myTone(1000, 100);
+    myTone(500, 100);
+    myTone(1500, 100);
 }
 
 
